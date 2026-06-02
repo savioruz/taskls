@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: taskls-app
     ports:
-      - "3000:3000"
+      - "${APP_PORT:-3000}:3000"
     volumes:
       # Persists daily submissions JSON database on the host machine
       - ./data:/app/data
@@ -15,6 +15,5 @@ services:
       - AI_BASE_URL=${AI_BASE_URL:-}
       - AI_MODEL=${AI_MODEL:-gpt-4o-mini}
       - AI_API_KEY=${AI_API_KEY:-}
-      - PORT=${APP_PORT:-3000}
       - NODE_ENV=${APP_ENV:-production}
     restart: unless-stopped
