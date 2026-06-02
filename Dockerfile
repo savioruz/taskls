@@ -28,10 +28,12 @@ COPY --from=builder /app/node_modules ./node_modules
 # Ensure persistence directory for local JSON storage exists
 RUN mkdir -p data
 
-EXPOSE 3000
+ARG APP_PORT=3000
+ARG APP_ENV=production
+ENV PORT=$APP_PORT
+ENV NODE_ENV=$APP_ENV
 
-ENV PORT=3000
-ENV NODE_ENV=production
+EXPOSE $APP_PORT
 
 # Start SvelteKit built standalone server with Bun
 CMD ["bun", "build/index.js"]
