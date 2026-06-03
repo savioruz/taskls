@@ -25,14 +25,13 @@ export const actions: Actions = {
 	default: async ({ request }) => {
 		const data = await request.formData();
 		const employeeName = data.get('employeeName')?.toString().trim();
-		const task = data.get('task')?.toString().trim();
-		const status = data.get('status')?.toString().trim();
+		const tasksStr = data.get('tasks')?.toString();
 
 		// Validation
 		if (!employeeName) {
 			return fail(400, {
 				error: 'Nama karyawan harus dipilih.',
-				values: { employeeName, task, status }
+				values: { employeeName }
 			});
 		}
 
@@ -40,41 +39,64 @@ export const actions: Actions = {
 		if (!employees.includes(employeeName)) {
 			return fail(400, {
 				error: 'Nama karyawan tidak terdaftar.',
-				values: { employeeName, task, status }
+				values: { employeeName }
 			});
 		}
 
-		if (!task) {
+		let tasks: Array<{ text: string; status: string }> = [];
+		try {
+			if (tasksStr) {
+				tasks = JSON.parse(tasksStr);
+			}
+		} catch (e) {
 			return fail(400, {
-				error: 'Deskripsi task/pekerjaan tidak boleh kosong.',
-				values: { employeeName, task, status }
+				error: 'Format data task tidak valid.',
+				values: { employeeName }
+			});
+		}
+
+		if (!Array.isArray(tasks) || tasks.length === 0) {
+			return fail(400, {
+				error: 'Task tidak boleh kosong.',
+				values: { employeeName }
 			});
 		}
 
 		const validStatuses = ['To-Do', 'In-Progress', 'Done', 'Obstacle'];
-		if (!status || !validStatuses.includes(status)) {
-			return fail(400, {
-				error: 'Status pekerjaan tidak valid.',
-				values: { employeeName, task, status }
-			});
+		for (let i = 0; i < tasks.length; i++) {
+			const item = tasks[i];
+			if (!item.text || !item.text.trim()) {
+				return fail(400, {
+					error: `Deskripsi task #${i + 1} tidak boleh kosong.`,
+					values: { employeeName }
+				});
+			}
+			if (!item.status || !validStatuses.includes(item.status)) {
+				return fail(400, {
+					error: `Status task #${i + 1} tidak valid.`,
+					values: { employeeName }
+				});
+			}
 		}
 
 		try {
 			// Save the report
-			await saveReport(employeeName, task, status as any);
+			await saveReport(employeeName, tasks as any);
 
-			// Check if all employees have submitted today, send webhook if they have
-			const result = await checkAndSendToDiscord();
+			// Check if all employees have submitted today, send webhook asynchronously in background
+			checkAndSendToDiscord().catch((error) => {
+				console.error('Async error in checkAndSendToDiscord:', error);
+			});
 
 			return {
 				success: true,
-				message: result.sent ? result.message : 'Laporan berhasil disimpan!'
+				message: 'Laporan berhasil disimpan!'
 			};
 		} catch (error) {
 			console.error('Server error handling submission:', error);
 			return fail(500, {
 				error: 'Terjadi kesalahan server internal. Silakan coba lagi.',
-				values: { employeeName, task, status }
+				values: { employeeName }
 			});
 		}
 	}

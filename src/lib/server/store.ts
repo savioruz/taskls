@@ -3,10 +3,14 @@ import path from 'path';
 import { env } from '$env/dynamic/private';
 import OpenAI from 'openai';
 
+export interface TaskItem {
+	text: string;
+	status: 'To-Do' | 'In-Progress' | 'Done' | 'Obstacle';
+}
+
 export interface TaskReport {
 	employeeName: string;
-	task: string;
-	status: 'To-Do' | 'In-Progress' | 'Done' | 'Obstacle';
+	tasks: TaskItem[];
 	submittedAt: string;
 }
 
@@ -48,6 +52,27 @@ export async function getStore(): Promise<DailyStore> {
 			await saveStore(newStore);
 			return newStore;
 		}
+
+		// Migrate old submissions structure if present
+		let migrated = false;
+		for (const name in store.submissions) {
+			const report = store.submissions[name] as any;
+			if (report && !report.tasks && report.task) {
+				report.tasks = [
+					{
+						text: report.task,
+						status: report.status || 'Done'
+					}
+				];
+				delete report.task;
+				delete report.status;
+				migrated = true;
+			}
+		}
+		if (migrated) {
+			await saveStore(store);
+		}
+
 		return store;
 	} catch (error) {
 		// If file doesn't exist or contains invalid JSON
@@ -68,16 +93,14 @@ async function saveStore(store: DailyStore): Promise<void> {
 
 export async function saveReport(
 	employeeName: string,
-	task: string,
-	status: TaskReport['status']
+	tasks: TaskItem[]
 ): Promise<DailyStore> {
 	const store = await getStore();
 	const today = getTodayDateString();
 
 	store.submissions[employeeName] = {
 		employeeName,
-		task,
-		status,
+		tasks,
 		submittedAt: new Date().toISOString()
 	};
 
@@ -126,7 +149,10 @@ export async function generateAISummary(store: DailyStore): Promise<string | nul
 		.map((name) => {
 			const report = store.submissions[name];
 			if (report) {
-				return `- **${name}** (Status: ${report.status}):\n  ${report.task.trim()}`;
+				const tasksFormatted = report.tasks
+					.map((t) => `- [${t.status}] ${t.text.trim()}`)
+					.join('\n  ');
+				return `- **${name}**:\n  ${tasksFormatted}`;
 			}
 			return `- **${name}**: Belum mengumpulkan laporan harian.`;
 		})
@@ -197,9 +223,12 @@ export async function sendDiscordWebhook(store: DailyStore): Promise<boolean> {
 	const fields = employees.map((name) => {
 		const report = store.submissions[name];
 		if (report) {
+			const tasksFormatted = report.tasks
+				.map((t) => `${statusEmoji[t.status] || '❓'} ${t.text.trim()}`)
+				.join('\n');
 			return {
-				name: `👤 ${name} (${statusEmoji[report.status]} ${report.status})`,
-				value: report.task.trim(),
+				name: `👤 ${name}`,
+				value: tasksFormatted || '*Tidak ada task*',
 				inline: false
 			};
 		} else {
@@ -215,7 +244,7 @@ export async function sendDiscordWebhook(store: DailyStore): Promise<boolean> {
 
 	if (aiSummary) {
 		embeds.push({
-			title: '🤖 RANGKUMAN EKSEKUTIF AI (DAILY SUMMARY)',
+			title: `🤖 RANGKUMAN EKSEKUTIF AI (${formatIndonesianDate(store.date)})`,
 			description: aiSummary,
 			color: 16770304, // Bright yellow #FFE600
 			footer: {
@@ -225,7 +254,7 @@ export async function sendDiscordWebhook(store: DailyStore): Promise<boolean> {
 		});
 
 		embeds.push({
-			title: '📋 DETAIL LAPORAN KARYAWAN',
+			title: `📋 DETAIL LAPORAN KARYAWAN (${formatIndonesianDate(store.date)})`,
 			description: `**Progress Pengisian:** ${submissionsCount}/${employees.length} Karyawan`,
 			color: 8246268, // Sky blue (#7dd3fc)
 			fields: fields,
@@ -235,8 +264,8 @@ export async function sendDiscordWebhook(store: DailyStore): Promise<boolean> {
 		});
 	} else {
 		embeds.push({
-			title: '📋 LAPORAN TUGAS HARIAN (DAILY TASK REPORT)',
-			description: `**Tanggal:** ${formatIndonesianDate(store.date)}\n**Progress:** ${submissionsCount}/${employees.length} Karyawan`,
+			title: `📋 LAPORAN TUGAS HARIAN (${formatIndonesianDate(store.date)})`,
+			description: `**Progress:** ${submissionsCount}/${employees.length} Karyawan`,
 			color: 16770304, // Bright yellow #FFE600
 			fields: fields,
 			footer: {

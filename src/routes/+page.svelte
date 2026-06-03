@@ -8,8 +8,94 @@
 	// Form state variables using Svelte 5 Runes
 	let submitting = $state(false);
 	let selectedEmployee = $state('');
-	let taskText = $state('');
-	let selectedStatus = $state('Done');
+	let tasks = $state<Array<{ text: string; status: 'To-Do' | 'In-Progress' | 'Done' | 'Obstacle' }>>([
+		{ text: '', status: 'Done' }
+	]);
+
+	function addTask() {
+		tasks.push({ text: '', status: 'Done' });
+	}
+
+	function removeTask(index: number) {
+		if (tasks.length > 1) {
+			tasks.splice(index, 1);
+		}
+	}
+
+	function parseGitLog(text: string): string[] {
+		const lines = text.split(/\r?\n/);
+		const messages: string[] = [];
+
+		if (text.includes('commit ') && text.includes('Author:')) {
+			let currentMessage = '';
+			for (const line of lines) {
+				if (line.startsWith('commit ')) {
+					if (currentMessage.trim()) {
+						messages.push(currentMessage.trim());
+					}
+					currentMessage = '';
+				} else if (line.startsWith('Author:') || line.startsWith('Date:') || line.startsWith('Merge:')) {
+					continue;
+				} else {
+					if (line.trim() === '') {
+						continue;
+					}
+					currentMessage += (currentMessage ? '\n' : '') + line.trim();
+				}
+			}
+			if (currentMessage.trim()) {
+				messages.push(currentMessage.trim());
+			}
+		} else {
+			const onelineRegex = /^[0-9a-f]{7,40}\s+(.*)$/i;
+			const commitHashRegex = /^commit\s+[0-9a-f]{7,40}\s+(.*)$/i;
+
+			for (const line of lines) {
+				const cleanLine = line.trim();
+				if (!cleanLine) continue;
+
+				const matchOneline = cleanLine.match(onelineRegex);
+				if (matchOneline) {
+					let message = matchOneline[1].trim();
+					message = message.replace(/^\([^)]+\)\s*/, '');
+					messages.push(message);
+					continue;
+				}
+
+				const matchCommitHash = cleanLine.match(commitHashRegex);
+				if (matchCommitHash) {
+					let message = matchCommitHash[1].trim();
+					message = message.replace(/^\([^)]+\)\s*/, '');
+					messages.push(message);
+					continue;
+				}
+			}
+		}
+
+		return messages.filter((msg) => !/merge/i.test(msg));
+	}
+
+	function handlePaste(event: ClipboardEvent, index: number) {
+		const pastedText = event.clipboardData?.getData('text') || '';
+		const parsedMessages = parseGitLog(pastedText);
+
+		if (parsedMessages.length > 0) {
+			event.preventDefault();
+
+			// Fill the first one in the current task
+			tasks[index].text = parsedMessages[0];
+
+			// Create the rest as new tasks
+			const newTasks = parsedMessages.slice(1).map((msg) => ({
+				text: msg,
+				status: 'Done' as const
+			}));
+
+			if (newTasks.length > 0) {
+				tasks.splice(index + 1, 0, ...newTasks);
+			}
+		}
+	}
 
 	// Searchable Dropdown state variables
 	let isOpen = $state(false);
@@ -33,9 +119,8 @@
 	// Clear task input and selection on success
 	$effect(() => {
 		if (form?.success) {
-			taskText = '';
+			tasks = [{ text: '', status: 'Done' }];
 			selectedEmployee = '';
-			selectedStatus = 'Done';
 		}
 	});
 
@@ -292,46 +377,79 @@
 							</div>
 						</div>
 
-						<!-- Pekerjaan / Task Description -->
-						<div class="flex flex-col gap-2">
-							<label for="task" class="font-extrabold text-sm uppercase tracking-wide"
-								>Task / Pekerjaan Hari Ini</label
-							>
-							<textarea
-								id="task"
-								name="task"
-								rows="5"
-								bind:value={taskText}
-								required
-								placeholder="Tuliskan detail pekerjaan, meeting, atau obstacle yang dihadapi hari ini..."
-								class="w-full bg-white border-3 border-black p-4 font-semibold text-sm outline-none focus:ring-0 focus:border-brand-yellow shadow-[3px_3px_0px_0px_#000] rounded-none placeholder:text-gray-400"
-							></textarea>
-						</div>
+						<!-- Hidden input serialize tasks array to JSON -->
+						<input type="hidden" name="tasks" value={JSON.stringify(tasks)} />
 
-						<!-- Status Selection Radio -->
-						<div class="flex flex-col gap-2">
-							<span class="font-extrabold text-sm uppercase tracking-wide">Status Pekerjaan</span>
-							<div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-								{#each Object.entries(statusConfig) as [key, config]}
-									<label
-										class="flex flex-col items-center justify-center p-3 cursor-pointer border-3 border-black text-xs font-extrabold select-none transition-all duration-100
-                           {selectedStatus === key
-																							? `${config.bg} translate-x-[2px] translate-y-[2px] shadow-[1px_1px_0px_0px_#000]`
-																							: 'bg-white shadow-[3px_3px_0px_0px_#000] hover:-translate-x-[1px] hover:-translate-y-[1px] hover:shadow-[4px_4px_0px_0px_#000]'}"
-									>
-										<input
-											type="radio"
-											name="status"
-											value={key}
-											bind:group={selectedStatus}
-											class="sr-only"
-											required
-										/>
-										<span class="text-xl mb-1">{config.emoji}</span>
-										<span>{config.text}</span>
-									</label>
-								{/each}
+						<!-- Pekerjaan / Task Description Array -->
+						<div class="flex flex-col gap-4">
+							<div class="flex items-center justify-between border-b-3 border-black pb-2">
+								<span class="font-extrabold text-sm uppercase tracking-wide">Daftar Task / Pekerjaan Hari Ini</span>
+								<button
+									type="button"
+									onclick={addTask}
+									class="bg-brand-blue border-2 border-black px-2.5 py-1 text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-[1px_1px_0px_0px_#000] cursor-pointer"
+								>
+									+ Tambah Task
+								</button>
 							</div>
+
+							{#each tasks as task, index}
+								<div class="border-3 border-black p-4 bg-gray-50 flex flex-col gap-4 relative neo-shadow-sm">
+									<div class="flex items-center justify-between border-b-2 border-black/10 pb-2">
+										<span class="font-black text-xs uppercase text-gray-500">Task #{index + 1}</span>
+										{#if tasks.length > 1}
+											<button
+												type="button"
+												onclick={() => removeTask(index)}
+												class="bg-brand-red text-white border-2 border-black px-2 py-0.5 text-[10px] font-black uppercase shadow-[1px_1px_0px_0px_#000] hover:translate-x-[0.5px] hover:translate-y-[0.5px] hover:shadow-[0.5px_0.5px_0px_0px_#000] cursor-pointer"
+											>
+												Hapus
+											</button>
+										{/if}
+									</div>
+
+									<div class="flex flex-col gap-2">
+										<label for="task-text-{index}" class="font-extrabold text-xs uppercase tracking-wide">
+											Deskripsi Pekerjaan
+											<span class="text-gray-400 font-normal text-[10px] normal-case ml-1">(Bisa copas git log untuk auto-split)</span>
+										</label>
+										<textarea
+											id="task-text-{index}"
+											bind:value={task.text}
+											onpaste={(e) => handlePaste(e, index)}
+											required
+											placeholder="Tuliskan detail pekerjaan..."
+											rows="2"
+											class="w-full bg-white border-2 border-black p-3 font-semibold text-xs outline-none focus:border-brand-yellow placeholder:text-gray-400"
+										></textarea>
+									</div>
+
+									<div class="flex flex-col gap-2">
+										<span class="font-extrabold text-xs uppercase tracking-wide">Status Task</span>
+										<div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+											{#each Object.entries(statusConfig) as [key, config]}
+												<label
+													class="flex items-center justify-center gap-1.5 p-2 cursor-pointer border-2 border-black text-[10px] font-extrabold select-none transition-all duration-100
+													{task.status === key
+														? `${config.bg} translate-x-[1px] translate-y-[1px] shadow-[1px_1px_0px_0px_#000]`
+														: 'bg-white shadow-[2px_2px_0px_0px_#000] hover:-translate-x-[0.5px] hover:-translate-y-[0.5px] hover:shadow-[2.5px_2.5px_0px_0px_#000]'}"
+												>
+													<input
+														type="radio"
+														name="status-{index}"
+														value={key}
+														bind:group={task.status}
+														class="sr-only"
+														required
+													/>
+													<span>{config.emoji}</span>
+													<span>{config.text}</span>
+												</label>
+											{/each}
+										</div>
+									</div>
+								</div>
+							{/each}
 						</div>
 
 						<!-- Submit Button -->
@@ -369,7 +487,6 @@
 						{#each data.employees as employee}
 							{@const report = data.submissions[employee]}
 							{#if report}
-								{@const config = statusConfig[report.status]}
 								<!-- Submitted Employee Card -->
 								<div
 									class="bg-white border-3 border-black p-4 neo-shadow flex flex-col gap-3 relative transition-all hover:scale-[1.01]"
@@ -383,16 +500,21 @@
 										<span class="font-extrabold text-base tracking-wide uppercase flex items-center gap-2">
 											👤 {employee}
 										</span>
-										<span
-											class="inline-flex items-center gap-1.5 px-3 py-1 font-bold text-xs uppercase tracking-wide border-2 border-black {config.bg} shadow-[2px_2px_0px_0px_#000]"
-										>
-											<span>{config.emoji}</span>
-											<span>{config.text}</span>
-										</span>
 									</div>
 
-									<div class="text-sm font-semibold text-black/90 whitespace-pre-wrap leading-relaxed pl-1">
-										{report.task}
+									<div class="flex flex-col gap-3 pl-1">
+										{#each report.tasks || [] as item}
+											{@const config = statusConfig[item.status] || statusConfig['Done']}
+											<div class="flex items-start gap-2 text-sm font-semibold text-black/90 leading-relaxed">
+												<span
+													class="inline-flex items-center gap-1.5 px-2 py-0.5 font-bold text-[10px] uppercase border-2 border-black {config.bg} shadow-[1.5px_1.5px_0px_0px_#000] shrink-0 mt-0.5"
+												>
+													<span>{config.emoji}</span>
+													<span>{config.text}</span>
+												</span>
+												<span class="whitespace-pre-wrap">{item.text}</span>
+											</div>
+										{/each}
 									</div>
 
 									<div
