@@ -97,6 +97,30 @@
 		}
 	}
 
+	function handleGlobalPaste(event: ClipboardEvent) {
+		const target = event.target as HTMLElement;
+		const tagName = target?.tagName?.toUpperCase();
+		if (
+			tagName === 'INPUT' ||
+			tagName === 'TEXTAREA' ||
+			target?.isContentEditable
+		) {
+			return;
+		}
+
+		const pastedText = event.clipboardData?.getData('text') || '';
+		const parsedMessages = parseGitLog(pastedText);
+
+		if (parsedMessages.length > 0) {
+			event.preventDefault();
+
+			tasks = parsedMessages.map((msg) => ({
+				text: msg,
+				status: 'Done' as const
+			}));
+		}
+	}
+
 	// Searchable Dropdown state variables
 	let isOpen = $state(false);
 	let searchQuery = $state('');
@@ -154,7 +178,7 @@
 	<title>Daily Task Report - TaskLS</title>
 </svelte:head>
 
-<svelte:window onclick={handleDocumentClick} />
+<svelte:window onclick={handleDocumentClick} onpaste={handleGlobalPaste} />
 
 <main class="min-h-screen p-4 md:p-8 flex flex-col items-center">
 	<div class="w-full max-w-6xl flex flex-col gap-8">
